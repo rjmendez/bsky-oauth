@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bsky-oauth"
+version = "0.1.0"
+description = "Bluesky (atproto) OAuth for Python bots, through Bluesky's official @atproto/oauth-client-node"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+bsky-oauth = "bsky_oauth.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+bsky_oauth = ["node/bsky.mjs", "node/errors.mjs", "node/package.json", "node/package-lock.json"]
