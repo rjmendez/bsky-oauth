@@ -33,6 +33,14 @@ class UnknownOutcome(BskyError):
     """The write call itself failed: check the account before retrying."""
 
 
+class BatchInterrupted(UnknownOutcome):
+    """A batch stopped mid-way; .results holds the per-URI results printed before it stopped (the next URI's outcome is unknown)."""
+
+    def __init__(self, results: list[dict], message: str):
+        super().__init__(message)
+        self.results = results
+
+
 @dataclass(frozen=True)
 class Profile:
     """One OAuth client. client_id is the https URL of its published metadata; state_dir holds its private key and session."""
@@ -137,6 +145,28 @@ class Account:
     def delete(self, uri: str) -> None:
         """Delete one of the signed-in account's records by at:// URI (needs a delete scope for its collection)."""
         self._call(["delete"], {"uri": uri})
+
+    def delete_many(self, uris: list[str], *, pause_ms: int = 300) -> list[dict]:
+        """Delete several of the account's records in one session: [{uri, status: deleted|failed|rate_limited, error?}] in order.
+        URIs missing from the result were not attempted (a rate limit stops the batch). Every URI is checked against the account before
+        anything is sent (BskyError). If the helper dies mid-batch, BatchInterrupted carries the results it printed so far."""
+        r = self.run(["delete-many"], stdin=json.dumps({"uris": list(uris), "pause_ms": pause_ms}))
+        results = []
+        for line in r.stdout.decode("utf-8", "replace").splitlines():
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict) and "uri" in row and "status" in row:
+                results.append(row)
+        err = r.stderr.decode("utf-8", "replace").strip()
+        if r.returncode == 0:
+            return results
+        if r.returncode == 2:
+            raise BskyError(f"helper exit 2: {err}")
+        if r.returncode == 3:
+            raise NothingSent(err or "the helper stopped before the first delete")
+        raise BatchInterrupted(results, err or f"helper exit {r.returncode}")
 
 
 def install(npm: str | None = None) -> None:

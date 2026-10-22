@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bsky-oauth"
-version = "0.1.0"
+version = "0.2.0"
 description = "Bluesky (atproto) OAuth for Python bots, through Bluesky's official @atproto/oauth-client-node"
 readme = "README.md"
 requires-python = ">=3.11"

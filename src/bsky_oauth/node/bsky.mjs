@@ -11,6 +11,7 @@
 //   node bsky.mjs whoami                 restore (and refresh) the session, print {did, handle, scope, expiresAt}
 //   node bsky.mjs post                   stdin {text, langs, images:[{path, alt, width, height}]} -> stdout {uri, cid}
 //   node bsky.mjs delete                 stdin {uri} (one of the signed-in account's records) -> stdout {deleted: uri}
+//   node bsky.mjs delete-many            stdin {uris, pause_ms} -> one JSON line per URI {uri, status, error?}, one session
 //
 // Exit codes: 0 ok; 2 usage/config; 3 failed before the write call (session, refresh, upload): nothing changed; 4 the write call
 // (createRecord / deleteRecord) itself failed, so whether it took effect is unknown.
@@ -20,7 +21,7 @@ import readline from 'node:readline/promises'
 import { NodeOAuthClient } from '@atproto/oauth-client-node'
 import { JoseKey } from '@atproto/jwk-jose'
 import { Agent, AtUri, RichText } from '@atproto/api'
-import { NothingSent, Usage, exitCode } from './errors.mjs'
+import { NothingSent, Usage, deleteFailure, exitCode } from './errors.mjs'
 
 const env = (name, fallback) => process.env[name] || fallback
 const OAUTH_DIR = env('BSKY_OAUTH_DIR')
@@ -209,6 +210,37 @@ const commands = {
     }
     await agent.com.atproto.repo.deleteRecord({ repo: at.host, collection: at.collection, rkey: at.rkey })
     console.log(JSON.stringify({ deleted: input.uri }))
+  },
+
+  // stdin {uris, pause_ms}: one session for the whole batch. Every URI is checked against the signed-in account before anything is
+  // sent; then one JSON line per URI: {uri, status: deleted|failed|rate_limited, error?}. A rate limit stops the batch (the rest are
+  // simply not printed, so the caller sees them as not done).
+  async 'delete-many'() {
+    const input = JSON.parse(fs.readFileSync(0, 'utf8'))
+    let agent, targets
+    try {
+      const { did } = account()
+      targets = input.uris.map((u) => [u, new AtUri(u)])
+      const foreign = targets.filter(([, at]) => at.host !== did).map(([u]) => u)
+      if (foreign.length) throw new Usage(`${foreign.length} URI(s) are not records of the signed-in account ${did}, e.g. ${foreign[0]}`)
+      const client = await makeClient()
+      agent = new Agent(await client.restore(did, true))
+    } catch (e) {
+      if (e instanceof Usage) throw e
+      throw new NothingSent(String(e?.message || e))
+    }
+    const pause = Number(input.pause_ms ?? 300)
+    for (const [uri, at] of targets) {
+      try {
+        await agent.com.atproto.repo.deleteRecord({ repo: at.host, collection: at.collection, rkey: at.rkey })
+        console.log(JSON.stringify({ uri, status: 'deleted' }))
+      } catch (e) {
+        const failure = deleteFailure(e)
+        console.log(JSON.stringify({ uri, ...failure }))
+        if (failure.status === 'rate_limited') break
+      }
+      if (pause > 0) await new Promise((r) => setTimeout(r, pause))
+    }
   },
 }
 

@@ -7,6 +7,6 @@
 Each bot is a Profile: its own confidential OAuth client (published metadata + public key), its own minimal scope, its own private
 key and session on disk. See README.md.
 """
-from .client import Account, BskyError, Image, NothingSent, PostRef, Profile, UnknownOutcome, install
+from .client import Account, BatchInterrupted, BskyError, Image, NothingSent, PostRef, Profile, UnknownOutcome, install
 
-__all__ = ["Account", "BskyError", "Image", "NothingSent", "PostRef", "Profile", "UnknownOutcome", "install"]
+__all__ = ["Account", "BatchInterrupted", "BskyError", "Image", "NothingSent", "PostRef", "Profile", "UnknownOutcome", "install"]

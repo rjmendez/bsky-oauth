@@ -58,4 +58,7 @@ except UnknownOutcome:   # the write call failed: check the account before any r
 ```
 
 `Account.delete(at_uri)` deletes one of the signed-in account's records (needs a delete scope for that collection).
+`Account.delete_many(uris, pause_ms=300)` deletes many in one session and returns one result per URI (`deleted`, `failed`,
+`rate_limited`; a rate limit stops the batch, URIs after it are left out). Foreign URIs are refused before anything is sent; if
+the helper dies mid-batch, `BatchInterrupted.results` holds what was done.
 Reading public data (your posts, replies, likes) needs no session at all: use the public AppView or `com.atproto.repo.listRecords`.

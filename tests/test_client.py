@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from bsky_oauth import Account, BskyError, Image, NothingSent, PostRef, Profile, UnknownOutcome, client
+from bsky_oauth import Account, BatchInterrupted, BskyError, Image, NothingSent, PostRef, Profile, UnknownOutcome, client
 from bsky_oauth.cli import main
 
 SCOPE = "atproto repo:app.bsky.feed.post?action=create blob:image/*"
@@ -111,6 +111,29 @@ class TestBoundary:
             acct.whoami()
         assert type(e.value) is BskyError
 
+    def test_delete_many_returns_each_result_in_order_and_sends_the_batch(self, tmp_path, monkeypatch):
+        lines = [{"uri": "at://did:plc:me/app.bsky.feed.post/1", "status": "deleted"},
+                 {"uri": "at://did:plc:me/app.bsky.feed.post/2", "status": "failed", "error": "InvalidRequest"},
+                 {"uri": "at://did:plc:me/app.bsky.feed.post/3", "status": "rate_limited", "error": "Rate Limit Exceeded"}]
+        acct = self.fake(tmp_path, monkeypatch, out="\n".join(json.dumps(x) for x in lines))
+        uris = [x["uri"] for x in lines] + ["at://did:plc:me/app.bsky.feed.post/4"]
+        assert acct.delete_many(uris, pause_ms=50) == lines
+        assert (self.seen(tmp_path)["cmd"], self.seen(tmp_path)["input"]) == ("delete-many", {"uris": uris, "pause_ms": 50})
+
+    def test_delete_many_interrupted_keeps_the_partial_results(self, tmp_path, monkeypatch):
+        acct = self.fake(tmp_path, monkeypatch, 4, msg="socket hang up")
+        script = tmp_path / "fake.mjs"
+        script.write_text(FAKE_HELPER.replace("if (process.env.FAKE_EXIT !== '0')",
+                                              "console.log(JSON.stringify({uri: 'at://did:plc:me/app.bsky.feed.post/1', status: 'deleted'}))\n"
+                                              "if (process.env.FAKE_EXIT !== '0')"), encoding="utf-8")
+        with pytest.raises(BatchInterrupted, match=r"^bsky delete-many: socket hang up$") as e:
+            acct.delete_many(["at://did:plc:me/app.bsky.feed.post/1", "at://did:plc:me/app.bsky.feed.post/2"])
+        assert e.value.results == [{"uri": "at://did:plc:me/app.bsky.feed.post/1", "status": "deleted"}]
+        assert isinstance(e.value, UnknownOutcome)
+        acct = self.fake(tmp_path, monkeypatch, 3, msg="no Bluesky session yet")
+        with pytest.raises(NothingSent, match=r"no Bluesky session yet"):
+            acct.delete_many(["at://did:plc:me/app.bsky.feed.post/1"])
+
     def test_missing_node_dependencies_are_named_before_anything_runs(self, tmp_path, monkeypatch):
         monkeypatch.setattr(client, "NODE_DIR", tmp_path / "node")
         with pytest.raises(BskyError, match=r"Node dependencies are not installed: run `bsky-oauth install`"):
@@ -168,15 +191,37 @@ class TestRealHelper:
         with pytest.raises(BskyError, match=r"no client key at .*client_key\.jwk\.json: run keygen first"):
             acct.delete("at://did:plc:me/app.bsky.feed.post/3a")
 
+    def test_delete_many_refuses_any_foreign_uri_before_any_network_call(self, tmp_path):
+        acct = Account(profile(tmp_path))
+        (tmp_path / "poster").mkdir()
+        (tmp_path / "poster" / "account.json").write_text(json.dumps({"did": "did:plc:me", "handle": "me.example"}))
+        with pytest.raises(BskyError, match=r"1 URI\(s\) are not records of the signed-in account did:plc:me, e\.g\. at://did:plc:other/"):
+            acct.delete_many(["at://did:plc:me/app.bsky.feed.post/1", "at://did:plc:other/app.bsky.feed.post/2"])
+        # only own records: past that check, stopping at the next missing piece (no client key)
+        with pytest.raises(BskyError, match=r"no client key at .*: run keygen first"):
+            acct.delete_many(["at://did:plc:me/app.bsky.feed.post/1"])
+
     def test_exit_code_contract(self):
         code = ("import { NothingSent, Usage, exitCode } from './errors.mjs'\n"
                 "const cases = [['post', new Usage()], ['post', new NothingSent()], ['post', new Error()], ['delete', new Error()],\n"
-                "  ['delete', new NothingSent()], ['whoami', new Error()], ['login', new Usage()]]\n"
+                "  ['delete', new NothingSent()], ['whoami', new Error()], ['login', new Usage()], ['delete-many', new Error()]]\n"
                 "console.log(JSON.stringify(cases.map(([c, e]) => exitCode(c, e))))\n")
         r = subprocess.run(["node", "--input-type=module", "-e", code], cwd=client.NODE_DIR, capture_output=True)
         assert r.returncode == 0, r.stderr
         # usage 2, nothing sent 3, a failed write (post, delete) 4, any other failure 1
-        assert json.loads(r.stdout) == [2, 3, 4, 4, 3, 1, 2]
+        assert json.loads(r.stdout) == [2, 3, 4, 4, 3, 1, 2, 4]
+
+    def test_delete_failures_stop_only_on_a_rate_limit(self):
+        code = ("import { deleteFailure } from './errors.mjs'\n"
+                "const e429 = Object.assign(new Error('Too Many Requests'), { status: 429 })\n"
+                "console.log(JSON.stringify([deleteFailure(e429), deleteFailure(new Error('Rate Limit Exceeded')),\n"
+                "  deleteFailure(new Error('Could not locate record')), deleteFailure('plain string')]))\n")
+        r = subprocess.run(["node", "--input-type=module", "-e", code], cwd=client.NODE_DIR, capture_output=True)
+        assert r.returncode == 0, r.stderr
+        assert json.loads(r.stdout) == [{"status": "rate_limited", "error": "Too Many Requests"},
+                                        {"status": "rate_limited", "error": "Rate Limit Exceeded"},
+                                        {"status": "failed", "error": "Could not locate record"},
+                                        {"status": "failed", "error": "plain string"}]
 
     def test_official_rich_text_finds_the_link_and_every_hashtag(self):
         text = "Lattice Orbweaver (Araneus thaddeus)\nOctober 1, 2024 · Bucks County, PA\nhttps://www.inaturalist.org/observations/42\n#nature #Arachnida"
