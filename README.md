@@ -17,17 +17,17 @@ One bot = one profile = one confidential OAuth client with its own scope, key an
 ```toml
 # profiles.toml
 [profiles.poster]
-client_id    = "https://rjmendez.github.io/bio-social-oauth/poster/client-metadata.json"
-redirect_uri = "https://rjmendez.github.io/bio-social-oauth/callback.html"
+client_id    = "https://your-username.github.io/your-oauth-repo/poster/client-metadata.json"
+redirect_uri = "https://your-username.github.io/your-oauth-repo/callback.html"
 scope        = "atproto repo:app.bsky.feed.post?action=create blob:image/*"
-state_dir    = 'F:\services\bio-social\oauth'
-client_name  = "bio-automation photo posts"
+state_dir    = '/path/to/your/poster/oauth'
+client_name  = "my bot's photo posts"
 
 [profiles.scrubber]           # example: delete old posts/replies, likes and reposts; cannot create anything
-client_id    = "https://rjmendez.github.io/bio-social-oauth/scrubber/client-metadata.json"
-redirect_uri = "https://rjmendez.github.io/bio-social-oauth/callback.html"
+client_id    = "https://your-username.github.io/your-oauth-repo/scrubber/client-metadata.json"
+redirect_uri = "https://your-username.github.io/your-oauth-repo/callback.html"
 scope        = "atproto repo:app.bsky.feed.post?action=delete repo:app.bsky.feed.like?action=delete repo:app.bsky.feed.repost?action=delete"
-state_dir    = 'F:\services\bsky-scrubber\oauth'
+state_dir    = '/path/to/your/scrubber/oauth'
 ```
 
 Why confidential: atproto caps a public client's session at two weeks; a confidential client's session has no fixed end (each
